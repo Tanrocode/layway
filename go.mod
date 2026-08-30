@@ -1,4 +1,4 @@
-module aigateway
+module github.com/Tanrocode/layway
 
 go 1.26.5
 
