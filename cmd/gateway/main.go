@@ -4,6 +4,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/joho/godotenv"
 
@@ -19,18 +20,22 @@ func main() {
 	openaiKey := os.Getenv("OPENAI_API_KEY")
 	anthropicKey := os.Getenv("ANTHROPIC_API_KEY")
 
+	rateLimiter := gateway.NewRateLimiter(10, time.Minute) // 10 requests per client per minute
+
 	mux := http.NewServeMux()
 
 	if openaiKey != "" {
 		openai := &provider.OpenAIProvider{APIKey: openaiKey, BaseURL: "https://api.openai.com"}
-		mux.HandleFunc("POST /openai/v1/chat/completions", gateway.HandleChatCompletions(openai))
+		handler := gateway.WithLogging(gateway.WithRateLimit(rateLimiter, gateway.HandleChatCompletions(openai)))
+		mux.HandleFunc("POST /openai/v1/chat/completions", handler)
 	} else {
 		log.Println("OPENAI_API_KEY not set, skipping OpenAI route")
 	}
 
 	if anthropicKey != "" {
 		anthropic := &provider.AnthropicProvider{APIKey: anthropicKey, BaseURL: "https://api.anthropic.com"}
-		mux.HandleFunc("POST /anthropic/v1/messages", gateway.HandleChatCompletions(anthropic))
+		handler := gateway.WithLogging(gateway.WithRateLimit(rateLimiter, gateway.HandleChatCompletions(anthropic)))
+		mux.HandleFunc("POST /anthropic/v1/messages", handler)
 	} else {
 		log.Println("ANTHROPIC_API_KEY not set, skipping Anthropic route")
 	}
