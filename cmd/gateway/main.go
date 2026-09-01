@@ -24,9 +24,12 @@ func main() {
 
 	mux := http.NewServeMux()
 
+	var allProviders []provider.Provider
+
 	if openaiKey != "" {
 		openai := &provider.OpenAIProvider{APIKey: openaiKey, BaseURL: "https://api.openai.com"}
-		handler := gateway.WithLogging(gateway.WithRateLimit(rateLimiter, gateway.HandleChatCompletions(openai)))
+		allProviders = append(allProviders, openai)
+		handler := gateway.WithLogging(gateway.WithRateLimit(rateLimiter, gateway.HandleChatCompletions([]provider.Provider{openai})))
 		mux.HandleFunc("POST /openai/v1/chat/completions", handler)
 	} else {
 		log.Println("OPENAI_API_KEY not set, skipping OpenAI route")
@@ -34,10 +37,16 @@ func main() {
 
 	if anthropicKey != "" {
 		anthropic := &provider.AnthropicProvider{APIKey: anthropicKey, BaseURL: "https://api.anthropic.com"}
-		handler := gateway.WithLogging(gateway.WithRateLimit(rateLimiter, gateway.HandleChatCompletions(anthropic)))
+		allProviders = append(allProviders, anthropic)
+		handler := gateway.WithLogging(gateway.WithRateLimit(rateLimiter, gateway.HandleChatCompletions([]provider.Provider{anthropic})))
 		mux.HandleFunc("POST /anthropic/v1/messages", handler)
 	} else {
 		log.Println("ANTHROPIC_API_KEY not set, skipping Anthropic route")
+	}
+
+	if len(allProviders) > 0 {
+		handler := gateway.WithLogging(gateway.WithRateLimit(rateLimiter, gateway.HandleChatCompletions(allProviders)))
+		mux.HandleFunc("POST /v1/chat/completions", handler)
 	}
 
 	log.Println("gateway listening on :8080")

@@ -1,23 +1,31 @@
 package gateway
 
 import (
-	"bytes"
+	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"time"
 
 	"github.com/Tanrocode/layway/internal/provider"
+	"github.com/Tanrocode/layway/internal/schema"
 )
 
 const maxRetryAttempts = 3
 
-func forwardWithRetry(p provider.Provider, bodyBytes []byte) (*http.Response, error) {
+func forwardWithRetry(p provider.Provider, req schema.ChatRequest) (*http.Response, error) {
 	var resp *http.Response
 	var err error
 
 	for attempt := 0; attempt < maxRetryAttempts; attempt++ {
-		resp, err = p.Forward(bytes.NewReader(bodyBytes))
+		var body io.Reader
+		body, err = p.Translate(req)
+		if err != nil {
+			return nil, err
+		}
+
+		resp, err = p.Forward(body)
 
 		retryable := err != nil || resp.StatusCode >= 500
 		if !retryable {
@@ -34,25 +42,40 @@ func forwardWithRetry(p provider.Provider, bodyBytes []byte) (*http.Response, er
 	return resp, err
 }
 
-func HandleChatCompletions(p provider.Provider) http.HandlerFunc {
+func HandleChatCompletions(providers []provider.Provider) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		bodyBytes, err := io.ReadAll(r.Body)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+		var req schema.ChatRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "invalid request body: "+err.Error(), http.StatusBadRequest)
 			return
 		}
 
-		resp, err := forwardWithRetry(p, bodyBytes)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadGateway)
+		var lastErr error
+		for _, p := range providers {
+			resp, err := forwardWithRetry(p, req)
+			if err != nil {
+				lastErr = err
+				log.Printf("provider %s failed, falling back: %v", p.Endpoint(), err)
+				continue
+			}
+			if resp.StatusCode >= 500 {
+				lastErr = fmt.Errorf("provider %s returned status %d", p.Endpoint(), resp.StatusCode)
+				resp.Body.Close()
+				log.Printf("provider %s failed, falling back: %v", p.Endpoint(), lastErr)
+				continue
+			}
+
+			parsed, err := p.ParseResponse(resp)
+			if err != nil {
+				lastErr = err
+				continue
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(parsed)
 			return
 		}
-		defer resp.Body.Close()
 
-		w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
-		w.WriteHeader(resp.StatusCode)
-		if _, err := io.Copy(w, resp.Body); err != nil {
-			log.Printf("error copying response body: %v", err)
-		}
+		http.Error(w, "all providers failed: "+lastErr.Error(), http.StatusBadGateway)
 	}
 }
