@@ -39,5 +39,3 @@ internal/provider/     Provider interface + OpenAI/Anthropic implementations
 internal/schema/       unified request/response types shared across providers
 internal/gateway/      HTTP handler, retry logic, rate limiting, logging middleware
 ```
-
-*No performance numbers are published here yet — they'll be added once measured against a real benchmark, not estimated.*
